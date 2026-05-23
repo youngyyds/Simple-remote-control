@@ -11,13 +11,17 @@ pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
 
-def _capture_screen() -> dict:
+def _capture_screen(quality: int = 60) -> dict:
     """Attempt to capture the screen with small retries and try each monitor.
+
+    Args:
+        quality: JPEG quality (1-95). Default 60.
 
     Returns a dict with keys 'image','width','height' on success or {'error': ...} on failure.
     """
     last_exc = None
     attempts = 2
+    quality = max(10, min(95, quality))  # clamp to valid range
     for attempt in range(attempts):
         try:
             with mss.mss() as sct:
@@ -28,7 +32,7 @@ def _capture_screen() -> dict:
                         frame = sct.grab(monitor)
                         image = Image.frombytes('RGB', frame.size, frame.rgb)
                         buffer = io.BytesIO()
-                        image.save(buffer, format='JPEG', quality=40, optimize=True)
+                        image.save(buffer, format='JPEG', quality=quality, optimize=True)
 
                         return {
                             'image': base64.b64encode(buffer.getvalue()).decode('ascii'),
@@ -62,7 +66,8 @@ async def handle_command(data, ws=None):
         elif cmd_type == 'echo':
             return {'status': 'ok', 'result': args}
         elif cmd_type in ('screen_capture', 'screenshot'):
-            capture = _capture_screen()
+            quality = args.get('quality', 60)
+            capture = _capture_screen(quality)
             return {'status': 'ok', 'result': capture}
         elif cmd_type == 'mouse_move':
             x = args.get('x')

@@ -9,7 +9,6 @@ import base64
 
 
 async def handler(ws):
-    ws.max_size = 20 * 1024 * 1024  # 20MB for receiving oversized messages
     addr = ws.remote_address
     print('Client connected:', addr)
     try:
@@ -64,26 +63,6 @@ async def handler(ws):
                             out_payload = response_payload.get('result')
                         else:
                             out_payload = {'error': response_payload.get('result')}
-
-                    # debug log for capture commands
-                    try:
-                        if payload.get('command_type') in ('screen_capture', 'screenshot'):
-                            if isinstance(out_payload, dict):
-                                print('Screen capture requested; sending payload keys:', list(out_payload.keys()))
-                                if 'error' in out_payload:
-                                    print('Screen capture error detail:', out_payload.get('error'))
-                            else:
-                                print('Screen capture requested; sending payload type:', type(out_payload))
-                    except Exception:
-                        pass
-
-                    # For screen capture commands, log payload keys for debugging
-                    if payload.get('command_type') in ('screen_capture', 'screenshot') and isinstance(out_payload, dict):
-                        img_key = 'image' if 'image' in out_payload else ('image_bytes' if 'image_bytes' in out_payload else 'none')
-                        b64_len = len(out_payload.get('image', '')) if 'image' in out_payload else 0
-                        print(f'Sending screen capture: img_key={img_key} base64_len={b64_len} {out_payload.get("width")}x{out_payload.get("height")}', flush=True)
-                        if 'error' in out_payload:
-                            print(f'  ERROR: {out_payload["error"]}', flush=True)
 
                     await ws.send(protocol.make_msg('response', out_payload, msg_id=data.get('id')))
                 continue

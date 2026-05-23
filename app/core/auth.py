@@ -10,6 +10,9 @@ class AuthError(Exception):
 
 
 def validate_token(token: str) -> bool:
+    # If no tokens are configured, allow all connections
+    if not VALID_TOKENS:
+        return True
     if not token:
         return False
     return token in VALID_TOKENS

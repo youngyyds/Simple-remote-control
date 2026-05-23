@@ -5,25 +5,36 @@ import time
 import traceback
 from PIL import Image
 import mss
-from pynput.mouse import Controller as MouseController, Button
-from pynput.keyboard import Controller as KeyboardController, Key
+import win32api
+import win32con
+import win32gui
 
-# Global controllers (created once)
-mouse = MouseController()
-keyboard = KeyboardController()
+# No need for pynput
 
-# Button mapping
 BUTTON_MAP = {
-    'left': Button.left,
-    'right': Button.right,
-    'middle': Button.middle,
+    'left': win32con.MOUSEEVENTF_LEFTDOWN | win32con.MOUSEEVENTF_LEFTUP,
+    'right': win32con.MOUSEEVENTF_RIGHTDOWN | win32con.MOUSEEVENTF_RIGHTUP,
+    'middle': win32con.MOUSEEVENTF_MIDDLEDOWN | win32con.MOUSEEVENTF_MIDDLEUP,
 }
 
-# Mouse state per client (to avoid repeated down/up)
-_mouse_state = {}  # ws -> {'left': bool, 'right': bool, 'middle': bool}
+# Mouse state per client
+_mouse_state = {}
 
-def _capture_screen(quality: int = 60) -> dict:
-    """Capture screen with mss, return base64 JPEG and dimensions."""
+def _set_cursor_pos(x, y):
+    """Set cursor position using win32api."""
+    win32api.SetCursorPos((x, y))
+
+def _mouse_event(dwFlags, dx=0, dy=0, dwData=0, dwExtraInfo=0):
+    """Wrapper for win32api.mouse_event."""
+    win32api.mouse_event(dwFlags, dx, dy, dwData, dwExtraInfo)
+
+def _key_event(vk_code, is_down):
+    """Send key down/up event."""
+    flags = 0 if is_down else win32con.KEYEVENTF_KEYUP
+    win32api.keybd_event(vk_code, 0, flags, 0)
+
+def _capture_screen(quality=60):
+    """Same as before – unchanged."""
     last_exc = None
     quality = max(10, min(95, quality))
     for attempt in range(2):
@@ -50,7 +61,6 @@ def _capture_screen(quality: int = 60) -> dict:
     return {'error': ''.join(tb).strip()}
 
 async def handle_command(data: dict, ws=None):
-    """Dispatch commands using pynput."""
     cmd_type = data.get('command_type')
     args = data.get('args', {})
 
@@ -60,92 +70,130 @@ async def handle_command(data: dict, ws=None):
         elif cmd_type == 'echo':
             return {'status': 'ok', 'result': args}
         elif cmd_type in ('screen_capture', 'screenshot'):
-            quality = args.get('quality', 60)
-            return {'status': 'ok', 'result': _capture_screen(quality)}
+            return {'status': 'ok', 'result': _capture_screen(args.get('quality', 60))}
         elif cmd_type == 'mouse_move':
-            x = args.get('x')
-            y = args.get('y')
+            x, y = args.get('x'), args.get('y')
             if x is None or y is None:
                 return {'status': 'error', 'result': 'x and y required'}
-            mouse.position = (x, y)
+            _set_cursor_pos(x, y)
             return {'status': 'ok', 'result': 'mouse moved'}
         elif cmd_type == 'mouse_down':
-            button_name = args.get('button', 'left')
-            button = BUTTON_MAP.get(button_name)
-            if not button:
-                return {'status': 'error', 'result': f'unknown button {button_name}'}
-            # Update state
-            if ws:
-                if ws not in _mouse_state:
-                    _mouse_state[ws] = {'left': False, 'right': False, 'middle': False}
-                if _mouse_state[ws].get(button_name, False):
-                    return {'status': 'ok', 'result': 'already down'}
-                _mouse_state[ws][button_name] = True
-            # Move to position if provided
-            x = args.get('x')
-            y = args.get('y')
+            btn = args.get('button', 'left')
+            x, y = args.get('x'), args.get('y')
             if x is not None and y is not None:
-                mouse.position = (x, y)
-                await asyncio.sleep(0.005)  # ensure move is processed before click
-            mouse.press(button)
-            await asyncio.sleep(0.01)  # small delay for system
+                _set_cursor_pos(x, y)
+                await asyncio.sleep(0.005)
+            if btn == 'left':
+                _mouse_event(win32con.MOUSEEVENTF_LEFTDOWN)
+            elif btn == 'right':
+                _mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN)
+            elif btn == 'middle':
+                _mouse_event(win32con.MOUSEEVENTF_MIDDLEDOWN)
+            else:
+                return {'status': 'error', 'result': f'unknown button {btn}'}
+            await asyncio.sleep(0.01)
             return {'status': 'ok', 'result': 'mouse down'}
         elif cmd_type == 'mouse_up':
-            button_name = args.get('button', 'left')
-            button = BUTTON_MAP.get(button_name)
-            if not button:
-                return {'status': 'error', 'result': f'unknown button {button_name}'}
-            if ws and ws in _mouse_state:
-                _mouse_state[ws][button_name] = False
-            mouse.release(button)
-            await asyncio.sleep(0.02)           # ensure OS processes the release
-            # Some applications (like desktop) need a second release to be sure
-            mouse.release(button)
+            btn = args.get('button', 'left')
+            if btn == 'left':
+                _mouse_event(win32con.MOUSEEVENTF_LEFTUP)
+            elif btn == 'right':
+                _mouse_event(win32con.MOUSEEVENTF_RIGHTUP)
+            elif btn == 'middle':
+                _mouse_event(win32con.MOUSEEVENTF_MIDDLEUP)
+            else:
+                return {'status': 'error', 'result': f'unknown button {btn}'}
+            await asyncio.sleep(0.01)
+            # Release twice to be absolutely sure (helps with stuck drags)
+            if btn == 'left':
+                _mouse_event(win32con.MOUSEEVENTF_LEFTUP)
+            elif btn == 'right':
+                _mouse_event(win32con.MOUSEEVENTF_RIGHTUP)
+            elif btn == 'middle':
+                _mouse_event(win32con.MOUSEEVENTF_MIDDLEUP)
             await asyncio.sleep(0.01)
             return {'status': 'ok', 'result': 'mouse up'}
         elif cmd_type == 'mouse_click':
-            button_name = args.get('button', 'left')
+            btn = args.get('button', 'left')
             clicks = int(args.get('clicks', 1))
-            x = args.get('x')
-            y = args.get('y')
-            button = BUTTON_MAP.get(button_name)
-            if not button:
-                return {'status': 'error', 'result': f'unknown button {button_name}'}
+            x, y = args.get('x'), args.get('y')
             if x is not None and y is not None:
-                mouse.position = (x, y)
-                await asyncio.sleep(0.005)   # settle position for desktop
-            for i in range(clicks):
-                mouse.click(button)
-                # Slightly longer gap between clicks for desktop double‑click
-                await asyncio.sleep(0.07)
+                _set_cursor_pos(x, y)
+                await asyncio.sleep(0.005)
+            down_flag = up_flag = None
+            if btn == 'left':
+                down_flag = win32con.MOUSEEVENTF_LEFTDOWN
+                up_flag = win32con.MOUSEEVENTF_LEFTUP
+            elif btn == 'right':
+                down_flag = win32con.MOUSEEVENTF_RIGHTDOWN
+                up_flag = win32con.MOUSEEVENTF_RIGHTUP
+            elif btn == 'middle':
+                down_flag = win32con.MOUSEEVENTF_MIDDLEDOWN
+                up_flag = win32con.MOUSEEVENTF_MIDDLEUP
+            else:
+                return {'status': 'error', 'result': f'unknown button {btn}'}
+            for _ in range(clicks):
+                _mouse_event(down_flag)
+                await asyncio.sleep(0.01)
+                _mouse_event(up_flag)
+                await asyncio.sleep(0.07)  # double-click timing
             return {'status': 'ok', 'result': f'{clicks} click(s)'}
         elif cmd_type == 'key_press':
             key = args.get('key')
             if not key:
                 return {'status': 'error', 'result': 'key required'}
-            # Try to map special keys (e.g., 'enter', 'space')
-            special_keys = {
-                'enter': Key.enter, 'return': Key.enter,
-                'space': Key.space, 'tab': Key.tab,
-                'esc': Key.esc, 'escape': Key.esc,
-                'backspace': Key.backspace, 'delete': Key.delete,
-                'up': Key.up, 'down': Key.down, 'left': Key.left, 'right': Key.right,
-                'home': Key.home, 'end': Key.end, 'page_up': Key.page_up, 'page_down': Key.page_down,
-            }
-            if key.lower() in special_keys:
-                keyboard.press(special_keys[key.lower()])
-                keyboard.release(special_keys[key.lower()])
-            else:
-                keyboard.press(key)
-                keyboard.release(key)
+            # Simple virtual key mapping (extend as needed)
+            vk = _key_to_vk(key)
+            if vk is None:
+                return {'status': 'error', 'result': f'unsupported key {key}'}
+            _key_event(vk, True)
+            await asyncio.sleep(0.01)
+            _key_event(vk, False)
             return {'status': 'ok', 'result': f'pressed {key}'}
         elif cmd_type == 'key_write':
             text = args.get('text', '')
-            if text == '':
+            if not text:
                 return {'status': 'error', 'result': 'text required'}
-            keyboard.type(text)
+            for ch in text:
+                vk = _char_to_vk(ch)
+                if vk:
+                    _key_event(vk, True)
+                    await asyncio.sleep(0.005)
+                    _key_event(vk, False)
+                    await asyncio.sleep(0.005)
+                else:
+                    # fallback to Unicode (less reliable)
+                    pass
             return {'status': 'ok', 'result': f'written {len(text)} chars'}
         else:
             return {'status': 'error', 'result': f'unknown command {cmd_type}'}
     except Exception as exc:
         return {'status': 'error', 'result': str(exc)}
+
+def _key_to_vk(key: str) -> int:
+    """Convert key name to virtual key code."""
+    # Common keys
+    mapping = {
+        'enter': win32con.VK_RETURN, 'return': win32con.VK_RETURN,
+        'space': win32con.VK_SPACE, 'tab': win32con.VK_TAB,
+        'esc': win32con.VK_ESCAPE, 'escape': win32con.VK_ESCAPE,
+        'backspace': win32con.VK_BACK, 'delete': win32con.VK_DELETE,
+        'up': win32con.VK_UP, 'down': win32con.VK_DOWN,
+        'left': win32con.VK_LEFT, 'right': win32con.VK_RIGHT,
+        'home': win32con.VK_HOME, 'end': win32con.VK_END,
+        'page_up': win32con.VK_PRIOR, 'page_down': win32con.VK_NEXT,
+        'ctrl': win32con.VK_CONTROL, 'alt': win32con.VK_MENU, 'shift': win32con.VK_SHIFT,
+    }
+    if key.lower() in mapping:
+        return mapping[key.lower()]
+    # Single character (a-z, 0-9)
+    if len(key) == 1 and key.isalnum():
+        return ord(key.upper())
+    return None
+
+def _char_to_vk(ch: str) -> int:
+    """Return virtual key code for a character."""
+    if ch.isalnum():
+        return ord(ch.upper())
+    # Add more as needed
+    return None

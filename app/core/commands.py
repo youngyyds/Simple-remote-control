@@ -20,6 +20,16 @@ BUTTON_MAP = {
 # Mouse state per client
 _mouse_state = {}
 
+async def _bring_window_to_foreground(x, y):
+    """Find the window under cursor and bring it to foreground."""
+    hwnd = win32gui.WindowFromPoint((x, y))
+    if hwnd:
+        foreground = win32gui.GetForegroundWindow()
+        if foreground != hwnd:
+            win32gui.SetForegroundWindow(hwnd)
+            await asyncio.sleep(0.05)
+    return hwnd
+
 def _set_cursor_pos(x, y):
     """Set cursor position using win32api."""
     win32api.SetCursorPos((x, y))
@@ -33,7 +43,7 @@ def _key_event(vk_code, is_down):
     flags = 0 if is_down else win32con.KEYEVENTF_KEYUP
     win32api.keybd_event(vk_code, 0, flags, 0)
 
-def _capture_screen(quality=60):
+async def _capture_screen(quality=60):
     """Same as before – unchanged."""
     last_exc = None
     quality = max(10, min(95, quality))
@@ -56,7 +66,7 @@ def _capture_screen(quality=60):
                         continue
         except Exception as e:
             last_exc = e
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
     tb = traceback.format_exception_only(type(last_exc), last_exc) if last_exc else ['unknown']
     return {'error': ''.join(tb).strip()}
 
@@ -81,6 +91,7 @@ async def handle_command(data: dict, ws=None):
             btn = args.get('button', 'left')
             x, y = args.get('x'), args.get('y')
             if x is not None and y is not None:
+                await _bring_window_to_foreground(x, y)   # 加这一行
                 _set_cursor_pos(x, y)
                 await asyncio.sleep(0.005)
             if btn == 'left':
@@ -103,21 +114,14 @@ async def handle_command(data: dict, ws=None):
                 _mouse_event(win32con.MOUSEEVENTF_MIDDLEUP)
             else:
                 return {'status': 'error', 'result': f'unknown button {btn}'}
-            await asyncio.sleep(0.01)
-            # Release twice to be absolutely sure (helps with stuck drags)
-            if btn == 'left':
-                _mouse_event(win32con.MOUSEEVENTF_LEFTUP)
-            elif btn == 'right':
-                _mouse_event(win32con.MOUSEEVENTF_RIGHTUP)
-            elif btn == 'middle':
-                _mouse_event(win32con.MOUSEEVENTF_MIDDLEUP)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.02)
             return {'status': 'ok', 'result': 'mouse up'}
         elif cmd_type == 'mouse_click':
             btn = args.get('button', 'left')
             clicks = int(args.get('clicks', 1))
             x, y = args.get('x'), args.get('y')
             if x is not None and y is not None:
+                await _bring_window_to_foreground(x, y)
                 _set_cursor_pos(x, y)
                 await asyncio.sleep(0.005)
             down_flag = up_flag = None

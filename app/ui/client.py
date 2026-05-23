@@ -587,7 +587,14 @@ class ClientWindow(QMainWindow):
         if self.client is None:
             return
         cmd = {'command_type': 'mouse_up', 'args': {'button': button}}
-        self.client.send_command_sync_short(cmd)
+        try:
+            self.client.send_command_sync_short(cmd, timeout=0.3)
+        except Exception:
+            # Retry once more
+            try:
+                self.client.send_command_sync_short(cmd, timeout=0.3)
+            except Exception:
+                pass
         self._drag_active = False
 
     def on_mouse_move(self, x, y):

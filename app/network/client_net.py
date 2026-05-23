@@ -74,7 +74,7 @@ class RemoteClient:
         return future.result(timeout)
 
     # Short‑timeout version for mouse moves/clicks (fails fast)
-    def send_command_sync_short(self, cmd: dict, timeout: float = 0.2) -> dict:
+    def send_command_sync_short(self, cmd: dict, timeout: float = 0.3) -> dict:
         try:
             return self.send_command_sync(cmd, timeout=timeout)
         except Exception:

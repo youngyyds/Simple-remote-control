@@ -86,6 +86,7 @@ async def handle_command(data: dict, ws=None):
             y = args.get('y')
             if x is not None and y is not None:
                 mouse.position = (x, y)
+                await asyncio.sleep(0.005)  # ensure move is processed before click
             mouse.press(button)
             await asyncio.sleep(0.01)  # small delay for system
             return {'status': 'ok', 'result': 'mouse down'}
@@ -95,9 +96,10 @@ async def handle_command(data: dict, ws=None):
             if not button:
                 return {'status': 'error', 'result': f'unknown button {button_name}'}
             if ws and ws in _mouse_state:
-                if not _mouse_state[ws].get(button_name, False):
-                    return {'status': 'ok', 'result': 'already up'}
                 _mouse_state[ws][button_name] = False
+            mouse.release(button)
+            await asyncio.sleep(0.02)           # ensure OS processes the release
+            # Some applications (like desktop) need a second release to be sure
             mouse.release(button)
             await asyncio.sleep(0.01)
             return {'status': 'ok', 'result': 'mouse up'}
@@ -111,10 +113,11 @@ async def handle_command(data: dict, ws=None):
                 return {'status': 'error', 'result': f'unknown button {button_name}'}
             if x is not None and y is not None:
                 mouse.position = (x, y)
-            # Perform click(s)
-            for _ in range(clicks):
+                await asyncio.sleep(0.005)   # settle position for desktop
+            for i in range(clicks):
                 mouse.click(button)
-                await asyncio.sleep(0.05)  # small gap between clicks
+                # Slightly longer gap between clicks for desktop double‑click
+                await asyncio.sleep(0.07)
             return {'status': 'ok', 'result': f'{clicks} click(s)'}
         elif cmd_type == 'key_press':
             key = args.get('key')

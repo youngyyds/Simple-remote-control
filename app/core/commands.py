@@ -43,14 +43,12 @@ def send_mouse_input(dwFlags, dx=0, dy=0, dwData=0):
 _mouse_state = {}
 
 async def _bring_window_to_foreground(x, y):
-    """激活光标所在窗口，并微动光标确保焦点生效"""
     hwnd = win32gui.WindowFromPoint((x, y))
     if hwnd:
         foreground = win32gui.GetForegroundWindow()
         if foreground != hwnd:
             win32gui.SetForegroundWindow(hwnd)
             await asyncio.sleep(0.05)
-            # 微动光标：移动1像素再移回，强制窗口接收焦点
             current = win32api.GetCursorPos()
             win32api.SetCursorPos((current[0]+1, current[1]))
             await asyncio.sleep(0.01)
